@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Accueil - Star Wars{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Bienvenue dans l'Univers Star Wars</h1>
+    
+    <p style="font-size: 1.3rem; line-height: 1.8; margin-bottom: 2rem; text-align: center; color: #FFE81F; font-style: italic;">
+        Il y a bien longtemps, dans une galaxie lointaine, très lointaine...
+    </p>
+    
+    <div style="margin-bottom: 2rem;">
+        <h2>À propos de Star Wars</h2>
+        <p style="line-height: 1.8; font-size: 1.1rem;">
+            Star Wars est une épopée spatiale créée par George Lucas, devenue l'une des franchises 
+            les plus influentes de l'histoire du cinéma. Cette saga mythique nous transporte dans 
+            un univers riche où s'affrontent les forces du Bien et du Mal, les Jedi et les Sith, 
+            la Rébellion et l'Empire.
+        </p>
+    </div>
+    
+    {% if not session.user_id %}
+    <div style="text-align: center; margin-top: 3rem; padding: 2rem; background: rgba(255, 232, 31, 0.1); border-radius: 10px;">
+        <p style="font-size: 1.2rem; margin-bottom: 1.5rem;">
+            Connectez-vous pour découvrir les biographies et générer des histoires !
+        </p>
+        <a href="/login" class="btn" style="font-size: 1.2rem; padding: 1rem 2rem;">
+            Se connecter
+        </a>
+    </div>
+    {% else %}
+    <div style="text-align: center; margin-top: 3rem;">
+        <h2>Que la Force soit avec vous, {{ session.username }} !</h2>
+        <div style="margin-top: 2rem; display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+            <a href="/biography" class="btn">Biographies</a>
+            <a href="/story" class="btn">Histoires</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

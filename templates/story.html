@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Générateur d'Histoire - Star Wars{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>✨ Générateur d'Histoire Star Wars</h1>
+    
+    <p style="font-size: 1.1rem; line-height: 1.6; margin-bottom: 2rem; color: #aaa;">
+        Laissez l'intelligence artificielle créer une histoire épique dans l'univers Star Wars. 
+        Vous pouvez spécifier un thème ou laisser l'IA vous surprendre !
+    </p>
+    
+    <div style="margin-bottom: 2rem; padding: 2rem; background: rgba(255, 232, 31, 0.1); border-radius: 8px;">
+        <h2 style="margin-bottom: 1rem;">🎬 Paramètres de l'histoire</h2>
+        
+        <div>
+            <label for="theme">Thème de l'histoire (optionnel)</label>
+            <input type="text" 
+                   id="theme" 
+                   placeholder="Ex: bataille spatiale, aventure des Jedi, mission secrète, romance galactique..."
+                   style="font-size: 1.05rem;">
+            <p style="color: #aaa; font-size: 0.9rem; margin-top: 0.5rem; margin-bottom: 0;">
+                💡 Laissez vide pour une histoire aléatoire
+            </p>
+        </div>
+        
+        <div style="margin-top: 1.5rem; display: flex; gap: 1rem; flex-wrap: wrap;">
+            <button onclick="generateStory()" style="font-size: 1.1rem; flex: 1; min-width: 200px;">
+                🚀 Générer l'histoire
+            </button>
+            <button onclick="clearStory()" style="background: #4a4a6a; font-size: 1.1rem;">
+                🗑️ Effacer
+            </button>
+        </div>
+    </div>
+    
+    <div id="loading" class="loading" style="display: none;">
+        <div class="spinner"></div>
+        <p>Création de votre histoire épique...</p>
+        <p style="font-size: 0.9rem; color: #aaa; margin-top: 0.5rem;">
+            Que la Force soit avec nous...
+        </p>
+    </div>
+    
+    <div id="story-content" style="line-height: 1.8; font-size: 1.1rem;"></div>
+    
+    <div style="margin-top: 2rem; text-align: center;">
+        <a href="/" class="btn" style="background: #4a4a6a;">
+            ← Retour à l'accueil
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function generateStory() {
+    const theme = document.getElementById('theme').value;
+    const loading = document.getElementById('loading');
+    const content = document.getElementById('story-content');
+    
+    // Afficher le loading
+    loading.style.display = 'block';
+    content.innerHTML = '';
+    
+    // Appel API
+    fetch('/api/generate_story', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ theme: theme })
+    })
+    .then(response => response.json())
+    .then(data => {
+        loading.style.display = 'none';
+        
+        if (data.story) {
+            // Formater le texte avec des paragraphes
+            const paragraphs = data.story.split('\n').filter(p => p.trim() !== '');
+            let htmlContent = '<div style="background: rgba(0, 0, 0, 0.5); padding: 2rem; border-radius: 8px; border: 1px solid #FFE81F;">';
+            
+            // Titre si présent
+            if (theme) {
+                htmlContent += '<h3 style="color: #FFE81F; margin-bottom: 1.5rem; text-align: center; font-size: 1.5rem;">📖 ' + theme + '</h3>';
+            }
+            
+            paragraphs.forEach(paragraph => {
+                htmlContent += '<p style="margin-bottom: 1rem; text-align: justify;">' + paragraph + '</p>';
+            });
+            
+            htmlContent += '</div>';
+            
+            // Ajouter un bouton de copie
+            htmlContent += '<div style="text-align: center; margin-top: 1.5rem;"><button onclick="copyStory()" style="background: #4a90e2;">📋 Copier l\'histoire</button></div>';
+            
+            content.innerHTML = htmlContent;
+            
+            // Scroll vers le contenu
+            content.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else if (data.error) {
+            content.innerHTML = '<div style="background: rgba(255, 0, 0, 0.2); padding: 2rem; border-radius: 8px; border: 2px solid red; text-align: center;"><p style="color: #ffcccc; font-size: 1.1rem;">⚠️ <strong>Erreur :</strong> ' + data.error + '</p><p style="color: #aaa; margin-top: 1rem; font-size: 0.95rem;">Vérifiez votre clé API Mistral dans app.py</p></div>';
+        }
+    })
+    .catch(error => {
+        loading.style.display = 'none';
+        content.innerHTML = '<div style="background: rgba(255, 0, 0, 0.2); padding: 2rem; border-radius: 8px; border: 2px solid red; text-align: center;"><p style="color: #ffcccc; font-size: 1.1rem;">⚠️ <strong>Erreur de connexion</strong></p><p style="color: #aaa; margin-top: 1rem;">Impossible de contacter l\'API. Vérifiez votre connexion.</p></div>';
+        console.error('Erreur:', error);
+    });
+}
+
+function clearStory() {
+    document.getElementById('story-content').innerHTML = '';
+    document.getElementById('theme').value = '';
+}
+
+function copyStory() {
+    const content = document.getElementById('story-content');
+    const text = content.innerText;
+    
+    navigator.clipboard.writeText(text).then(() => {
+        alert('✅ Histoire copiée dans le presse-papiers !');
+    }).catch(err => {
+        console.error('Erreur de copie:', err);
+        alert('❌ Erreur lors de la copie');
+    });
+}
+
+// Permettre de générer avec la touche Entrée
+document.getElementById('theme').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        generateStory();
+    }
+});
+</script>
+{% endblock %}

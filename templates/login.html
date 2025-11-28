@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Connexion - Star Wars{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 500px; margin: 0 auto;">
+    <h1 style="text-align: center;">Connexion</h1>
+    
+    <p style="text-align: center; margin-bottom: 2rem; color: #aaa;">
+        Entrez dans la galaxie Star Wars
+    </p>
+    
+    {% if error %}
+    <div class="error">
+        <strong>⚠️ Erreur :</strong> {{ error }}
+    </div>
+    {% endif %}
+    
+    <form method="POST" style="margin-top: 2rem;">
+        <div>
+            <label for="username">👤 Nom d'utilisateur</label>
+            <input type="text" id="username" name="username" placeholder="Entrez votre nom d'utilisateur" required autofocus>
+        </div>
+        
+        <div style="margin-top: 1rem;">
+            <label for="password">🔒 Mot de passe</label>
+            <input type="password" id="password" name="password" placeholder="Entrez votre mot de passe" required>
+        </div>
+        
+        <button type="submit" style="width: 100%; margin-top: 2rem; font-size: 1.1rem;">
+            🚀 Se connecter
+        </button>
+    </form>
+    
+    <div style="margin-top: 2rem; padding: 1.5rem; background: rgba(255, 232, 31, 0.1); border-radius: 8px; border: 1px solid #FFE81F;">
+        <p style="text-align: center; color: #FFE81F; font-weight: bold; margin-bottom: 0.5rem;">
+            Compte de démonstration
+        </p>
+        <p style="text-align: center; color: #aaa; font-size: 0.95rem;">
+            <strong>Nom d'utilisateur :</strong> admin<br>
+            <strong>Mot de passe :</strong> admin123
+        </p>
+    </div>
+    
+    <div style="margin-top: 2rem; text-align: center;">
+        <a href="/" style="color: #FFE81F; text-decoration: none;">
+            ← Retour à l'accueil
+        </a>
+    </div>
+</div>
+
+<style>
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+        -webkit-text-fill-color: #fff;
+        -webkit-box-shadow: 0 0 0px 1000px rgba(0, 0, 0, 0.5) inset;
+        transition: background-color 5000s ease-in-out 0s;
+    }
+</style>
+{% endblock %}
