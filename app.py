@@ -1,225 +1,232 @@
-# app.py
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-import sqlite3
 import os
-from functools import wraps
+import psycopg2
+import psycopg2.extras
+import bcrypt
 import requests
+from functools import wraps
+import random
 
 app = Flask(__name__)
 app.secret_key = 'votre_cle_secrete_changez_moi'
 
-# Configuration Mistral AI
-MISTRAL_API_KEY = 'lUGD0HL6OAc0Gwk5zVJovjkGDu60nzDc'
+# Configuration Mistral
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 MISTRAL_API_URL = 'https://api.mistral.ai/v1/chat/completions'
 
-# Initialisation de la base de données
+# Connexion PostgreSQL
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+def get_db():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
+
+
 def init_db():
-    conn = sqlite3.connect('starwars.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  username TEXT UNIQUE NOT NULL,
-                  password TEXT NOT NULL,
-                  email TEXT,
-                  role TEXT DEFAULT 'user')''')
-    
-    # Créer un utilisateur admin par défaut
-    try:
-        c.execute("INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)",
-                  ('admin', 'admin123', 'admin@starwars.com', 'admin'))
-    except sqlite3.IntegrityError:
-        pass
-    
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Create USERS table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            password VARCHAR(255) NOT NULL,
+            email VARCHAR(255),
+            role VARCHAR(50) DEFAULT 'user'
+        )
+    """)
+
+    # Insert admin user if not exists
+    hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
+
+    cur.execute("""
+        INSERT INTO users (username, password, email, role)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (username) DO NOTHING
+    """, ("admin", hashed, "admin@starwars.com", "admin"))
+
     conn.commit()
     conn.close()
+
 
 init_db()
 
-# Décorateur pour vérifier la connexion
+
+# LOGIN REQUIRED DECORATOR
 def login_required(f):
     @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return redirect(url_for('login'))
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
-    return decorated_function
+    return wrapper
 
-# Route d'accueil
+
 @app.route('/')
 def home():
-    return render_template('home.html')
+    return render_template("home.html")
 
-# Route de connexion
+
+# LOGIN
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == 'POST':
+    if request.method == "POST":
         username = request.form['username']
-        password = request.form['password']
-        
-        conn = sqlite3.connect('starwars.db')
-        c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-        user = c.fetchone()
-        conn.close()
-        
-        if user:
-            session['user_id'] = user[0]
-            session['username'] = user[1]
-            session['role'] = user[4]
-            return redirect(url_for('home'))
-        else:
-            return render_template('login.html', error="Identifiants incorrects")
-    
-    return render_template('login.html')
+        password = request.form['password'].encode()
 
-# Route de déconnexion
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE username=%s", (username,))
+        user = cur.fetchone()
+        conn.close()
+
+        if user and bcrypt.checkpw(password, user["password"].encode()):
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            session["role"] = user["role"]
+            return redirect(url_for("home"))
+
+        return render_template("login.html", error="Identifiants incorrects")
+
+    return render_template("login.html")
+
+
+# LOGOUT
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('home'))
+    return redirect(url_for("home"))
 
-# Route de gestion des utilisateurs
+
+# USERS PAGE
 @app.route('/users')
 @login_required
 def users():
-    if session.get('role') != 'admin':
-        return redirect(url_for('home'))
-    
-    conn = sqlite3.connect('starwars.db')
-    c = conn.cursor()
-    c.execute("SELECT * FROM users")
-    users_list = c.fetchall()
-    conn.close()
-    
-    return render_template('users.html', users=users_list)
+    if session.get("role") != "admin":
+        return redirect(url_for("home"))
 
-# Ajouter un utilisateur
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users ORDER BY id")
+    users_list = cur.fetchall()
+    conn.close()
+
+    return render_template("users.html", users=users_list)
+
+
+# ADD USER
 @app.route('/users/add', methods=['POST'])
 @login_required
 def add_user():
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'Non autorisé'}), 403
-    
-    username = request.form['username']
-    password = request.form['password']
-    email = request.form['email']
-    role = request.form.get('role', 'user')
-    
-    conn = sqlite3.connect('starwars.db')
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)",
-                  (username, password, email, role))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        pass
-    conn.close()
-    
-    return redirect(url_for('users'))
+    if session.get("role") != "admin":
+        return jsonify({"error": "Non autorisé"}), 403
 
-# Supprimer un utilisateur
+    username = request.form['username']
+    password = request.form['password'].encode()
+    email = request.form['email']
+    role = request.form.get("role", "user")
+
+    hashed = bcrypt.hashpw(password, bcrypt.gensalt()).decode()
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            INSERT INTO users (username, password, email, role)
+            VALUES (%s, %s, %s, %s)
+        """, (username, hashed, email, role))
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        pass
+
+    conn.close()
+    return redirect(url_for("users"))
+
+
+# DELETE USER
 @app.route('/users/delete/<int:user_id>')
 @login_required
 def delete_user(user_id):
-    if session.get('role') != 'admin':
-        return redirect(url_for('home'))
-    
-    conn = sqlite3.connect('starwars.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM users WHERE id=?", (user_id,))
+    if session.get("role") != "admin":
+        return redirect(url_for("home"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
     conn.commit()
     conn.close()
-    
-    return redirect(url_for('users'))
 
-# Route pour générer une biographie de personnage aléatoire
+    return redirect(url_for("users"))
+
+
+# RANDOM CHARACTER PAGE
 @app.route('/biography')
 @login_required
 def biography():
     characters = [
-        "Luke Skywalker", "Leia Organa", "Han Solo", "Darth Vader", 
+        "Luke Skywalker", "Leia Organa", "Han Solo", "Darth Vader",
         "Obi-Wan Kenobi", "Yoda", "Rey", "Kylo Ren", "Ahsoka Tano",
         "Mace Windu", "Qui-Gon Jinn", "Padmé Amidala", "Anakin Skywalker",
         "Chewbacca", "R2-D2", "C-3PO", "Boba Fett", "Grogu"
     ]
-    import random
     character = random.choice(characters)
-    return render_template('biography.html', character=character)
+    return render_template("biography.html", character=character)
 
-# API pour générer la biographie avec Mistral
+
+# GENERATE BIOGRAPHY (API)
 @app.route('/api/generate_biography', methods=['POST'])
 @login_required
 def generate_biography():
-    character = request.json.get('character')
-    
-    headers = {
-        'Authorization': f'Bearer {MISTRAL_API_KEY}',
-        'Content-Type': 'application/json'
-    }
-    
-    data = {
-        'model': 'mistral-small-latest',
-        'messages': [
-            {
-                'role': 'user',
-                'content': f'Génère une biographie détaillée et captivante de {character} de Star Wars en français. Inclus son histoire, ses compétences, et son importance dans la saga. Fais environ 200-300 mots.'
-            }
-        ],
-        'temperature': 0.7,
-        'max_tokens': 800
-    }
-    
-    try:
-        response = requests.post(MISTRAL_API_URL, headers=headers, json=data)
-        response.raise_for_status()
-        result = response.json()
-        biography_text = result['choices'][0]['message']['content']
-        return jsonify({'biography': biography_text})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    character = request.json.get("character")
 
-# Route pour générer une histoire
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "mistral-small-latest",
+        "messages": [
+            {"role": "user", "content": f"Génère une biographie détaillée de {character}."}
+        ]
+    }
+
+    response = requests.post(MISTRAL_API_URL, json=data, headers=headers)
+    result = response.json()
+    return jsonify({"biography": result["choices"][0]["message"]["content"]})
+
+
+# STORY PAGE
 @app.route('/story')
 @login_required
 def story():
-    return render_template('story.html')
+    return render_template("story.html")
 
-# API pour générer une histoire avec Mistral
+
 @app.route('/api/generate_story', methods=['POST'])
 @login_required
 def generate_story():
-    theme = request.json.get('theme', '')
-    
-    headers = {
-        'Authorization': f'Bearer {MISTRAL_API_KEY}',
-        'Content-Type': 'application/json'
-    }
-    
-    prompt = f'Écris une histoire courte et captivante dans l\'univers Star Wars en français'
-    if theme:
-        prompt += f' sur le thème suivant : {theme}'
-    prompt += '. L\'histoire doit être originale, immersive et faire environ 300-400 mots.'
-    
-    data = {
-        'model': 'mistral-small-latest',
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ],
-        'temperature': 0.8,
-        'max_tokens': 1200
-    }
-    
-    try:
-        response = requests.post(MISTRAL_API_URL, headers=headers, json=data)
-        response.raise_for_status()
-        result = response.json()
-        story_text = result['choices'][0]['message']['content']
-        return jsonify({'story': story_text})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    theme = request.json.get("theme", "")
 
-if __name__ == '__main__':
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    prompt = f"Histoire Star Wars sur le thème : {theme}"
+
+    data = {
+        "model": "mistral-small-latest",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+
+    response = requests.post(MISTRAL_API_URL, json=data, headers=headers)
+    result = response.json()
+
+    return jsonify({"story": result["choices"][0]["message"]["content"]})
+
+
+if __name__ == "__main__":
     app.run()
