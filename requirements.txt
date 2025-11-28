@@ -4,3 +4,5 @@ requests==2.31.0
 bcrypt==4.0.1
 SQLAlchemy==2.0.23
 pg8000==1.30.1
+psycopg2-binary==2.9.3
+
