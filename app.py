@@ -1,53 +1,43 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import os
-import psycopg2
-import psycopg2.extras
 import bcrypt
 import requests
-from functools import wraps
 import random
+from functools import wraps
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 
 app = Flask(__name__)
-app.secret_key = 'votre_cle_secrete_changez_moi'
+app.secret_key = "change_me"
 
-# Configuration Mistral
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-MISTRAL_API_URL = 'https://api.mistral.ai/v1/chat/completions'
-
-# Connexion PostgreSQL
+# ENV VARS
 DATABASE_URL = os.getenv("DATABASE_URL")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
-
-def get_db():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
+# SQLAlchemy engine (pg8000 driver auto-detected)
+engine = create_engine(DATABASE_URL, echo=False)
 
 
 def init_db():
-    conn = get_db()
-    cur = conn.cursor()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                email VARCHAR(255),
+                role VARCHAR(50) DEFAULT 'user'
+            );
+        """))
 
-    # Create USERS table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(255) UNIQUE NOT NULL,
-            password VARCHAR(255) NOT NULL,
-            email VARCHAR(255),
-            role VARCHAR(50) DEFAULT 'user'
-        )
-    """)
+        # Create admin if not exists
+        hashed = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode()
 
-    # Insert admin user if not exists
-    hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
-
-    cur.execute("""
-        INSERT INTO users (username, password, email, role)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (username) DO NOTHING
-    """, ("admin", hashed, "admin@starwars.com", "admin"))
-
-    conn.commit()
-    conn.close()
+        conn.execute(text("""
+            INSERT INTO users (username, password, email, role)
+            VALUES (:u, :p, :e, 'admin')
+            ON CONFLICT (username) DO NOTHING;
+        """), {"u": "admin", "p": hashed, "e": "admin@starwars.com"})
 
 
 init_db()
@@ -63,28 +53,27 @@ def login_required(f):
     return wrapper
 
 
-@app.route('/')
+@app.route("/")
 def home():
     return render_template("home.html")
 
 
 # LOGIN
-@app.route('/login', methods=['GET', 'POST'])
+@app.route("/login", methods=['GET', 'POST'])
 def login():
     if request.method == "POST":
-        username = request.form['username']
-        password = request.form['password'].encode()
+        username = request.form["username"]
+        password = request.form["password"].encode()
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username=%s", (username,))
-        user = cur.fetchone()
-        conn.close()
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT * FROM users WHERE username = :u
+            """), {"u": username}).fetchone()
 
-        if user and bcrypt.checkpw(password, user["password"].encode()):
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
-            session["role"] = user["role"]
+        if result and bcrypt.checkpw(password, result.password.encode()):
+            session["user_id"] = result.id
+            session["username"] = result.username
+            session["role"] = result.role
             return redirect(url_for("home"))
 
         return render_template("login.html", error="Identifiants incorrects")
@@ -92,77 +81,60 @@ def login():
     return render_template("login.html")
 
 
-# LOGOUT
-@app.route('/logout')
+@app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("home"))
 
 
-# USERS PAGE
-@app.route('/users')
+@app.route("/users")
 @login_required
 def users():
     if session.get("role") != "admin":
         return redirect(url_for("home"))
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users ORDER BY id")
-    users_list = cur.fetchall()
-    conn.close()
+    with engine.begin() as conn:
+        rows = conn.execute(text("SELECT * FROM users ORDER BY id")).fetchall()
 
-    return render_template("users.html", users=users_list)
+    return render_template("users.html", users=rows)
 
 
-# ADD USER
-@app.route('/users/add', methods=['POST'])
+@app.route("/users/add", methods=['POST'])
 @login_required
 def add_user():
     if session.get("role") != "admin":
-        return jsonify({"error": "Non autorisé"}), 403
+        return "Unauthorized", 403
 
-    username = request.form['username']
-    password = request.form['password'].encode()
-    email = request.form['email']
+    username = request.form["username"]
+    password = bcrypt.hashpw(request.form["password"].encode(), bcrypt.gensalt()).decode()
+    email = request.form["email"]
     role = request.form.get("role", "user")
 
-    hashed = bcrypt.hashpw(password, bcrypt.gensalt()).decode()
-
-    conn = get_db()
-    cur = conn.cursor()
-
     try:
-        cur.execute("""
-            INSERT INTO users (username, password, email, role)
-            VALUES (%s, %s, %s, %s)
-        """, (username, hashed, email, role))
-        conn.commit()
-    except psycopg2.errors.UniqueViolation:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO users (username, password, email, role)
+                VALUES (:u, :p, :e, :r)
+            """), {"u": username, "p": password, "e": email, "r": role})
+    except IntegrityError:
         pass
 
-    conn.close()
     return redirect(url_for("users"))
 
 
-# DELETE USER
-@app.route('/users/delete/<int:user_id>')
+@app.route("/users/delete/<int:user_id>")
 @login_required
 def delete_user(user_id):
     if session.get("role") != "admin":
         return redirect(url_for("home"))
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
-    conn.commit()
-    conn.close()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
 
     return redirect(url_for("users"))
 
 
-# RANDOM CHARACTER PAGE
-@app.route('/biography')
+@app.route("/biography")
 @login_required
 def biography():
     characters = [
@@ -175,57 +147,54 @@ def biography():
     return render_template("biography.html", character=character)
 
 
-# GENERATE BIOGRAPHY (API)
-@app.route('/api/generate_biography', methods=['POST'])
+@app.route("/api/generate_biography", methods=['POST'])
 @login_required
 def generate_biography():
     character = request.json.get("character")
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     data = {
         "model": "mistral-small-latest",
         "messages": [
             {"role": "user", "content": f"Génère une biographie détaillée de {character}."}
-        ]
+        ],
     }
 
-    response = requests.post(MISTRAL_API_URL, json=data, headers=headers)
+    response = requests.post("https://api.mistral.ai/v1/chat/completions", json=data, headers=headers)
     result = response.json()
+
     return jsonify({"biography": result["choices"][0]["message"]["content"]})
 
 
-# STORY PAGE
-@app.route('/story')
+@app.route("/story")
 @login_required
 def story():
     return render_template("story.html")
 
 
-@app.route('/api/generate_story', methods=['POST'])
+@app.route("/api/generate_story", methods=['POST'])
 @login_required
 def generate_story():
-    theme = request.json.get("theme", "")
+    theme = request.json["theme"]
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
-
-    prompt = f"Histoire Star Wars sur le thème : {theme}"
 
     data = {
         "model": "mistral-small-latest",
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [{"role": "user", "content": theme}],
     }
 
-    response = requests.post(MISTRAL_API_URL, json=data, headers=headers)
-    result = response.json()
+    response = requests.post("https://api.mistral.ai/v1/chat/completions", json=data, headers=headers)
+    text_out = response.json()["choices"][0]["message"]["content"]
 
-    return jsonify({"story": result["choices"][0]["message"]["content"]})
+    return jsonify({"story": text_out})
 
 
 if __name__ == "__main__":
